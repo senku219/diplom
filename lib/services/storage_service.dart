@@ -7,6 +7,9 @@ class StorageService {
   static const String _keyTicker = 'alert_ticker';
   static const String _keyThresholdPrice = 'alert_threshold_price';
   static const String _keyLastPrice = 'last_checked_price';
+  static const String _keyDirection = 'alert_direction';
+  static const String _keyInitialPrice = 'alert_initial_price';
+  static const String _keyIsActive = 'alert_is_active';
 
   /// Сохраняет настройки алерта
   Future<void> saveAlert(Alert alert) async {
@@ -16,6 +19,9 @@ class StorageService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyTicker, alert.ticker.toUpperCase());
       await prefs.setDouble(_keyThresholdPrice, alert.thresholdPrice);
+      await prefs.setString(_keyDirection, alert.direction);
+      await prefs.setDouble(_keyInitialPrice, alert.initialPrice);
+      await prefs.setBool(_keyIsActive, alert.isActive);
       
       print('[StorageService] Алерт успешно сохранен');
     } catch (e) {
@@ -32,11 +38,17 @@ class StorageService {
       final prefs = await SharedPreferences.getInstance();
       final ticker = prefs.getString(_keyTicker);
       final thresholdPrice = prefs.getDouble(_keyThresholdPrice);
+      final direction = prefs.getString(_keyDirection);
+      final initialPrice = prefs.getDouble(_keyInitialPrice);
+      final isActive = prefs.getBool(_keyIsActive) ?? true;
 
-      if (ticker != null && thresholdPrice != null) {
+      if (ticker != null && thresholdPrice != null && direction != null && initialPrice != null) {
         final alert = Alert(
           ticker: ticker,
           thresholdPrice: thresholdPrice,
+          direction: direction,
+          initialPrice: initialPrice,
+          isActive: isActive,
         );
         print('[StorageService] Алерт загружен: ${alert.ticker} @ \$${alert.thresholdPrice}');
         return alert;
@@ -80,6 +92,9 @@ class StorageService {
       await prefs.remove(_keyTicker);
       await prefs.remove(_keyThresholdPrice);
       await prefs.remove(_keyLastPrice);
+      await prefs.remove(_keyDirection);
+      await prefs.remove(_keyInitialPrice);
+      await prefs.remove(_keyIsActive);
       print('[StorageService] Все данные очищены');
     } catch (e) {
       print('[StorageService] Ошибка при очистке: $e');

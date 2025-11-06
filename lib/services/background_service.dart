@@ -2,6 +2,7 @@ import 'package:workmanager/workmanager.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'price_service.dart';
 import 'storage_service.dart';
+import 'database_service.dart';
 
 /// Сервис для фоновой проверки цен
 class BackgroundService {
@@ -66,58 +67,92 @@ void callbackDispatcher() {
       
       await localNotifications.initialize(initSettings);
 
-      // Загружаем сохраненный алерт
-      final alert = await storageService.loadAlert();
+      // Инициализируем DatabaseService для работы с алертами
+      final db = DatabaseService();
+      await db.initDatabase();
 
-      if (alert == null) {
-        print('[BackgroundService] Алерт не найден, задача пропущена');
+      // Загружаем все активные алерты из БД
+      final activeAlertsRows = await db.getActiveAlerts();
+
+      if (activeAlertsRows.isEmpty) {
+        print('[BackgroundService] Нет активных алертов, задача пропущена');
         return Future.value(true);
       }
 
-      print('[BackgroundService] Проверка цены для ${alert.ticker}...');
+      print('[BackgroundService] Найдено активных алертов: ${activeAlertsRows.length}');
 
-      // Получаем текущую цену
-      final currentPrice = await priceService.getPrice(alert.ticker);
+      // Группируем по тикерам для оптимизации
+      final tickers = activeAlertsRows.map((r) => r['ticker'] as String).toSet();
+      int notificationId = 0;
 
-      if (currentPrice == null) {
-        print('[BackgroundService] Не удалось получить цену');
-        return Future.value(true);
-      }
+      for (final ticker in tickers) {
+        print('[BackgroundService] Проверка цены для $ticker...');
 
-      print('[BackgroundService] Текущая цена ${alert.ticker}: \$$currentPrice');
-      print('[BackgroundService] Пороговая цена: \$${alert.thresholdPrice}');
+        final currentPrice = await priceService.getPrice(ticker);
+        if (currentPrice == null) {
+          print('[BackgroundService] Не удалось получить цену для $ticker');
+          continue;
+        }
 
-      // Сохраняем последнюю проверенную цену
-      await storageService.saveLastPrice(currentPrice);
+        print('[BackgroundService] Текущая цена $ticker: \$$currentPrice');
 
-      // Проверяем, достигнута ли пороговая цена
-      if (priceService.isThresholdReached(currentPrice, alert.thresholdPrice)) {
-        print('[BackgroundService] ✅ Пороговая цена достигнута!');
+        // Сохраняем последнюю проверенную цену
+        await storageService.saveLastPrice(currentPrice);
 
-        // Отправляем локальное уведомление
-        const AndroidNotificationDetails androidDetails =
-            AndroidNotificationDetails(
-          'price_alerts',
-          'Уведомления о ценах',
-          channelDescription: 'Уведомления о достижении пороговой цены',
-          importance: Importance.high,
-          priority: Priority.high,
-          showWhen: true,
-        );
+        // Проверяем все алерты для этого тикера
+        final tickerAlerts = activeAlertsRows.where((r) => r['ticker'] == ticker);
+        for (final alertRow in tickerAlerts) {
+          final direction = alertRow['direction'] as String;
+          final thresholdPrice = (alertRow['threshold_price'] as num).toDouble();
+          final alertId = alertRow['id'] as int;
 
-        const NotificationDetails notificationDetails =
-            NotificationDetails(android: androidDetails);
+          final shouldTrigger = (direction == 'UP' && currentPrice >= thresholdPrice) ||
+              (direction == 'DOWN' && currentPrice <= thresholdPrice);
 
-        await localNotifications.show(
-          0,
-          '🎯 Цена достигнута!',
-          '${alert.ticker} достиг цены \$${currentPrice.toStringAsFixed(2)} (порог: \$${alert.thresholdPrice.toStringAsFixed(2)})',
-          notificationDetails,
-        );
+          if (shouldTrigger) {
+            print('[BackgroundService] ✅ Пороговая цена достигнута для $ticker @ \$$thresholdPrice!');
 
-        print('[BackgroundService] Уведомление отправлено');
-      } else {
-        print('[BackgroundService] Пороговая цена еще не достигнута');
+            // Отправляем локальное уведомление
+            const AndroidNotificationDetails androidDetails =
+                AndroidNotificationDetails(
+              'price_alerts',
+              'Уведомления о ценах',
+              channelDescription: 'Уведомления о достижении пороговой цены',
+              importance: Importance.high,
+              priority: Priority.high,
+              showWhen: true,
+            );
+
+            const NotificationDetails notificationDetails =
+                NotificationDetails(android: androidDetails);
+
+            final arrow = direction == 'UP' ? '↑' : '↓';
+            final verb = direction == 'UP' ? 'достиг' : 'упал до';
+
+            await localNotifications.show(
+              notificationId++,
+              '🎯 Умный алерт',
+              '$ticker $verb \$${thresholdPrice.toStringAsFixed(2)} $arrow (текущая: \$${currentPrice.toStringAsFixed(2)})',
+              notificationDetails,
+            );
+
+            print('[BackgroundService] Уведомление отправлено');
+
+            // Деактивируем алерт в БД
+            await db.deactivateAlert(alertId);
+
+            // Логируем в AlertsLog
+            final assetId = await db.getAssetIdByTicker(ticker);
+            await db.logAlert(
+              assetId: assetId,
+              ticker: ticker,
+              price: currentPrice,
+              targetPrice: thresholdPrice,
+              triggeredAt: DateTime.now().millisecondsSinceEpoch,
+              direction: direction,
+            );
+          }
+        }
       }
 
       return Future.value(true);

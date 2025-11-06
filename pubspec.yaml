@@ -55,6 +55,19 @@ dependencies:
   # Локальные уведомления
   flutter_local_notifications: ^17.2.3
 
+  # Локальная БД SQLite
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  intl: ^0.20.2
+
+  # Открытие ссылок и информация о пакете
+  url_launcher: ^6.3.1
+  package_info_plus: ^8.0.2
+  
+  # Доступ к путям файловой системы
+  path_provider: ^2.1.1
+  share_plus: ^7.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
